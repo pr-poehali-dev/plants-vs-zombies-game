@@ -66,16 +66,22 @@ interface Projectile {
   damage: number;
 }
 
-const plants: PlantType[] = [
+const allPlants: PlantType[] = [
   { id: 'sunflower', name: 'Подсолнух', emoji: '🌻', cost: 50, damage: 0, hp: 100 },
-  { id: 'peashooter', name: 'Горохострел', emoji: '🌱', cost: 100, damage: 20, hp: 100, shootRate: 1500 },
+  { id: 'peashooter', name: 'Горохострел', emoji: '🌱', cost: 100, damage: 20, hp: 100, shootRate: 1350 },
   { id: 'wallnut', name: 'Орех', emoji: '🥜', cost: 150, damage: 0, hp: 400 },
   { id: 'cactus', name: 'Кактус', emoji: '🌵', cost: 200, damage: 30, hp: 150, shootRate: 1200 },
+  { id: 'repeater', name: 'Повторитель', emoji: '🌿', cost: 200, damage: 20, hp: 100, shootRate: 700 },
+  { id: 'chomper', name: 'Кусака', emoji: '🪴', cost: 150, damage: 100, hp: 150, shootRate: 3000 },
+  { id: 'iceshooter', name: 'Ледострел', emoji: '❄️', cost: 175, damage: 15, hp: 100, shootRate: 1400 },
+  { id: 'tallnut', name: 'Большой орех', emoji: '🌰', cost: 250, damage: 0, hp: 800 },
 ];
 
 const zombieTypes: ZombieType[] = [
-  { id: 'basic', name: 'Обычный', emoji: '🧟', hp: 100, speed: 0.5 },
-  { id: 'cone', name: 'С ведром', emoji: '🧟‍♂️', hp: 200, speed: 0.4 },
+  { id: 'basic', name: 'Обычный', emoji: '🧟', hp: 100, speed: 0.3 },
+  { id: 'cone', name: 'С конусом', emoji: '🚧', hp: 250, speed: 0.28 },
+  { id: 'bucket', name: 'С ведром', emoji: '🪣', hp: 400, speed: 0.25 },
+  { id: 'pole', name: 'С шестом', emoji: '🧟‍♂️', hp: 150, speed: 0.5 },
 ];
 
 const mockPlayers: Player[] = [
@@ -96,6 +102,7 @@ export default function Index() {
   const [projectiles, setProjectiles] = useState<Projectile[]>([]);
   const [gameRunning, setGameRunning] = useState(false);
   const [wave, setWave] = useState(1);
+  const [currentLevel, setCurrentLevel] = useState(1);
   const [zombiesKilled, setZombiesKilled] = useState(0);
   const [gameOver, setGameOver] = useState(false);
 
@@ -103,7 +110,17 @@ export default function Index() {
     if (!gameRunning || gameOver) return;
     
     const row = Math.floor(Math.random() * 5);
-    const type = Math.random() > 0.7 ? 'cone' : 'basic';
+    const rand = Math.random();
+    let type = 'basic';
+    
+    if (currentLevel >= 5 && rand > 0.85) {
+      type = 'bucket';
+    } else if (currentLevel >= 4 && rand > 0.7) {
+      type = 'pole';
+    } else if (currentLevel >= 2 && rand > 0.5) {
+      type = 'cone';
+    }
+    
     const zombieType = zombieTypes.find(z => z.id === type)!;
     
     const newZombie: ActiveZombie = {
@@ -116,7 +133,7 @@ export default function Index() {
     };
     
     setZombies(prev => [...prev, newZombie]);
-  }, [gameRunning, gameOver]);
+  }, [gameRunning, gameOver, currentLevel]);
 
   const spawnFallingSun = useCallback(() => {
     if (!gameRunning || gameOver) return;
@@ -137,6 +154,10 @@ export default function Index() {
       setFallingSuns(prev => prev.filter(s => s.id !== newSun.id));
     }, 5000);
   }, [gameRunning, gameOver]);
+
+  const getAvailablePlants = useCallback(() => {
+    return allPlants.slice(0, Math.min(2 + currentLevel, allPlants.length));
+  }, [currentLevel]);
 
   useEffect(() => {
     if (!gameRunning || gameOver) return;
@@ -199,13 +220,13 @@ export default function Index() {
           }
 
           if (plant.type === 'sunflower') {
-            if (!plant.lastSunGeneration || now - plant.lastSunGeneration > 10000) {
+            if (!plant.lastSunGeneration || now - plant.lastSunGeneration > 9000) {
               setSun(prev => prev + 25);
               return { ...plant, lastSunGeneration: now };
             }
           }
 
-          const plantType = plants.find(p => p.id === plant.type)!;
+          const plantType = allPlants.find(p => p.id === plant.type)!;
           if (plantType.damage > 0 && plantType.shootRate) {
             if (!plant.lastShot || now - plant.lastShot > plantType.shootRate) {
               const zombiesInLane = zombies.filter(z => z.row === plant.row && z.position > plant.col);
@@ -272,7 +293,7 @@ export default function Index() {
     const plantExists = placedPlants.some(p => p.row === row && p.col === col);
     if (plantExists) return;
 
-    const plantType = plants.find(p => p.id === selectedPlant);
+    const plantType = allPlants.find(p => p.id === selectedPlant);
     if (!plantType || sun < plantType.cost) return;
 
     const newPlant: PlacedPlant = {
@@ -295,7 +316,7 @@ export default function Index() {
     setSun(prev => prev + 25);
   };
 
-  const startGame = () => {
+  const startGame = (level?: number) => {
     setGameRunning(true);
     setGameOver(false);
     setPlacedPlants([]);
@@ -305,6 +326,7 @@ export default function Index() {
     setSun(150);
     setZombiesKilled(0);
     setWave(1);
+    if (level) setCurrentLevel(level);
   };
 
   const renderHome = () => (
@@ -392,7 +414,7 @@ export default function Index() {
         )}
 
         <div className="grid grid-cols-4 gap-4 mb-6">
-          {plants.map((plant) => (
+          {getAvailablePlants().map((plant) => (
             <Card
               key={plant.id}
               className={`p-4 cursor-pointer transition-all hover:scale-105 border-2 ${
@@ -430,11 +452,11 @@ export default function Index() {
                     >
                       {plantHere && (
                         <div className="relative animate-pulse">
-                          <span className="text-3xl">{plants.find(p => p.id === plantHere.type)?.emoji}</span>
+                          <span className="text-3xl">{allPlants.find(p => p.id === plantHere.type)?.emoji}</span>
                           <div className="absolute -bottom-1 left-0 right-0 h-1 bg-border rounded-full overflow-hidden">
                             <div 
                               className="h-full bg-primary transition-all" 
-                              style={{ width: `${(plantHere.hp / (plants.find(p => p.id === plantHere.type)?.hp || 100)) * 100}%` }}
+                              style={{ width: `${(plantHere.hp / (allPlants.find(p => p.id === plantHere.type)?.hp || 100)) * 100}%` }}
                             />
                           </div>
                         </div>
@@ -510,7 +532,12 @@ export default function Index() {
               className={`p-6 text-center cursor-pointer hover:scale-105 transition-all border-2 ${
                 idx < 8 ? 'border-primary bg-card' : 'border-border opacity-50'
               }`}
-              onClick={() => idx < 8 && setCurrentPage('game')}
+              onClick={() => {
+                if (idx < 8) {
+                  startGame(idx + 1);
+                  setCurrentPage('game');
+                }
+              }}
             >
               <div className="text-4xl mb-2">
                 {idx < 8 ? '🌟' : '🔒'}
@@ -623,7 +650,7 @@ export default function Index() {
         <Card className="p-6">
           <h3 className="text-xl font-bold mb-4">Любимые растения</h3>
           <div className="grid grid-cols-4 gap-4">
-            {plants.map((plant) => (
+            {allPlants.slice(0, 4).map((plant) => (
               <div key={plant.id} className="text-center">
                 <div className="text-4xl mb-2">{plant.emoji}</div>
                 <p className="text-sm font-medium">{plant.name}</p>
