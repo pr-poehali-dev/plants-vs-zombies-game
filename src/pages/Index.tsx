@@ -8,6 +8,7 @@ import { sounds } from '@/utils/sounds';
 
 type Page = 'home' | 'game' | 'levels' | 'leaderboard' | 'profile' | 'rules' | 'shop' | 'auth';
 type Tool = 'plant' | 'shovel' | 'glove' | null;
+type GameMode = '2d' | '3d';
 
 interface Player {
   id: number;
@@ -124,6 +125,8 @@ export default function Index() {
   const [coins, setCoins] = useState(0);
   const [username, setUsername] = useState<string | null>(localStorage.getItem('pvz_username'));
   const [draggedPlant, setDraggedPlant] = useState<PlacedPlant | null>(null);
+  const [gameMode, setGameMode] = useState<GameMode>('2d');
+  const [gloveCooldown, setGloveCooldown] = useState<number>(0);
 
   const spawnZombie = useCallback(() => {
     if (!gameRunning || gameOver) return;
@@ -338,6 +341,7 @@ export default function Index() {
     }
 
     if (selectedTool === 'glove' && plantExists) {
+      if (gloveCooldown > Date.now()) return;
       setDraggedPlant(plantExists);
       setPlacedPlants(prev => prev.filter(p => p.id !== plantExists.id));
       return;
@@ -348,6 +352,7 @@ export default function Index() {
       setPlacedPlants(prev => [...prev, movedPlant]);
       setDraggedPlant(null);
       setSelectedTool('plant');
+      setGloveCooldown(Date.now() + 5000);
       return;
     }
 
@@ -414,11 +419,37 @@ export default function Index() {
         <Button 
           size="lg" 
           className="text-lg px-12 py-6 bg-primary hover:bg-primary/90 transition-all hover:scale-105"
-          onClick={() => setCurrentPage('game')}
+          onClick={() => {
+            startGame(1);
+            setCurrentPage('game');
+          }}
         >
           <Icon name="Play" className="mr-2" size={24} />
           Начать игру
         </Button>
+        
+        <div className="mt-8 flex gap-4 justify-center">
+          <Card
+            className={`p-6 cursor-pointer transition-all hover:scale-105 border-2 ${
+              gameMode === '2d' ? 'border-primary ring-2 ring-primary' : 'border-border'
+            }`}
+            onClick={() => setGameMode('2d')}
+          >
+            <div className="text-4xl mb-2 text-center">🎮</div>
+            <p className="font-bold text-center">2D режим</p>
+            <p className="text-xs text-muted-foreground text-center mt-1">Классический</p>
+          </Card>
+          <Card
+            className={`p-6 cursor-pointer transition-all hover:scale-105 border-2 ${
+              gameMode === '3d' ? 'border-primary ring-2 ring-primary' : 'border-border'
+            }`}
+            onClick={() => setGameMode('3d')}
+          >
+            <div className="text-4xl mb-2 text-center">🕶️</div>
+            <p className="font-bold text-center">3D режим</p>
+            <p className="text-xs text-muted-foreground text-center mt-1">С перспективой</p>
+          </Card>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4 max-w-5xl w-full">
@@ -515,6 +546,30 @@ export default function Index() {
           </Card>
         )}
 
+        <Card className="p-4 mb-4 border-2 border-primary">
+          <div className="flex items-center gap-3">
+            <span className="text-4xl">🧟</span>
+            <div className="flex-1">
+              <div className="flex justify-between mb-2">
+                <span className="text-sm font-medium">Прогресс волны</span>
+                <span className="text-sm font-bold text-primary">{zombiesKilled} / 20</span>
+              </div>
+              <div className="relative w-full h-6 bg-border rounded-full overflow-hidden">
+                <div 
+                  className="absolute top-0 left-0 h-full bg-gradient-to-r from-primary to-secondary transition-all duration-300"
+                  style={{ width: `${(zombiesKilled / 20) * 100}%` }}
+                />
+                <div 
+                  className="absolute top-1/2 -translate-y-1/2 text-2xl transition-all duration-300"
+                  style={{ left: `${Math.min((zombiesKilled / 20) * 100, 95)}%` }}
+                >
+                  🧟
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
+
         <div className="flex gap-4 mb-4">
           <Card
             className={`p-4 cursor-pointer transition-all hover:scale-105 border-2 ${
@@ -526,13 +581,23 @@ export default function Index() {
             <p className="text-center text-xs mt-1">Лопата</p>
           </Card>
           <Card
-            className={`p-4 cursor-pointer transition-all hover:scale-105 border-2 ${
+            className={`p-4 cursor-pointer transition-all hover:scale-105 border-2 relative overflow-hidden ${
               selectedTool === 'glove' ? 'border-secondary ring-2 ring-secondary' : 'border-border'
-            }`}
-            onClick={() => setSelectedTool(selectedTool === 'glove' ? 'plant' : 'glove')}
+            } ${gloveCooldown > Date.now() ? 'opacity-50' : ''}`}
+            onClick={() => {
+              if (gloveCooldown <= Date.now()) {
+                setSelectedTool(selectedTool === 'glove' ? 'plant' : 'glove');
+              }
+            }}
           >
-            <div className="text-4xl text-center">🧤</div>
-            <p className="text-center text-xs mt-1">Перчатка</p>
+            {gloveCooldown > Date.now() && (
+              <div 
+                className="absolute bottom-0 left-0 right-0 bg-muted transition-all"
+                style={{ height: `${((gloveCooldown - Date.now()) / 5000) * 100}%` }}
+              />
+            )}
+            <div className="text-4xl text-center relative z-10">🧤</div>
+            <p className="text-center text-xs mt-1 relative z-10">Перчатка</p>
           </Card>
         </div>
 
@@ -591,7 +656,10 @@ export default function Index() {
                       }`}
                       onClick={() => handleCellClick(row, col)}
                       style={{
-                        transform: gameRunning ? 'perspective(1000px) rotateX(2deg)' : 'none',
+                        transform: gameMode === '3d' 
+                          ? `perspective(1200px) rotateX(${5 + row * 2}deg) rotateY(${col - 4}deg) scale(${1 - row * 0.02})`
+                          : 'none',
+                        transformStyle: 'preserve-3d',
                       }}
                     >
                       {plantHere && (
@@ -825,43 +893,90 @@ export default function Index() {
     </div>
   );
 
-  const renderProfile = () => (
-    <div className="min-h-screen p-8">
-      <div className="max-w-3xl mx-auto">
-        <Button variant="outline" className="mb-6" onClick={() => setCurrentPage('home')}>
-          <Icon name="ArrowLeft" className="mr-2" size={20} />
-          Назад
-        </Button>
-        <Card className="p-8 mb-6 border-2 border-primary">
-          <div className="flex items-start gap-6">
-            <Avatar className="h-24 w-24 bg-primary text-5xl flex items-center justify-center">
-              🎮
-            </Avatar>
-            <div className="flex-1">
-              <h2 className="text-3xl font-bold mb-2">{username || 'Игрок'}</h2>
-              <div className="flex gap-2 mb-4">
-                <Badge className="bg-primary">Уровень {maxUnlockedLevel}</Badge>
-                <Badge variant="outline" className="bg-yellow-500 text-black">
-                  <Icon name="Coins" className="mr-1" size={16} />
-                  {coins} монет
-                </Badge>
+  const renderProfile = () => {
+    const [isEditing, setIsEditing] = useState(false);
+    const [newName, setNewName] = useState(username || '');
+
+    const handleSaveName = () => {
+      if (newName.trim()) {
+        localStorage.setItem('pvz_username', newName.trim());
+        setUsername(newName.trim());
+        setIsEditing(false);
+      }
+    };
+
+    return (
+      <div className="min-h-screen p-8">
+        <div className="max-w-3xl mx-auto">
+          <Button variant="outline" className="mb-6" onClick={() => setCurrentPage('home')}>
+            <Icon name="ArrowLeft" className="mr-2" size={20} />
+            Назад
+          </Button>
+          <Card className="p-8 mb-6 border-2 border-primary">
+            <div className="flex items-start gap-6">
+              <Avatar className="h-24 w-24 bg-primary text-5xl flex items-center justify-center">
+                🎮
+              </Avatar>
+              <div className="flex-1">
+                {isEditing ? (
+                  <div className="mb-4">
+                    <input
+                      type="text"
+                      className="w-full p-3 rounded-lg bg-background border-2 border-primary outline-none text-2xl font-bold mb-2"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleSaveName()}
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleSaveName}>
+                        <Icon name="Check" className="mr-2" size={16} />
+                        Сохранить
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        setIsEditing(false);
+                        setNewName(username || '');
+                      }}>
+                        <Icon name="X" className="mr-2" size={16} />
+                        Отмена
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 mb-2">
+                    <h2 className="text-3xl font-bold">{username || 'Игрок'}</h2>
+                    <Button 
+                      size="sm" 
+                      variant="ghost"
+                      onClick={() => setIsEditing(true)}
+                    >
+                      <Icon name="Edit" size={16} />
+                    </Button>
+                  </div>
+                )}
+                <div className="flex gap-2 mb-4">
+                  <Badge className="bg-primary">Уровень {maxUnlockedLevel}</Badge>
+                  <Badge variant="outline" className="bg-yellow-500 text-black">
+                    <Icon name="Coins" className="mr-1" size={16} />
+                    {coins} монет
+                  </Badge>
+                </div>
+                <p className="text-muted-foreground">Защитник дома • Открыто {maxUnlockedLevel} уровней</p>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-4"
+                  onClick={() => {
+                    localStorage.removeItem('pvz_username');
+                    setUsername(null);
+                  }}
+                >
+                  <Icon name="LogOut" className="mr-2" size={16} />
+                  Выйти
+                </Button>
               </div>
-              <p className="text-muted-foreground">Защитник дома • Открыто {maxUnlockedLevel} уровней</p>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className="mt-4"
-                onClick={() => {
-                  localStorage.removeItem('pvz_username');
-                  setUsername(null);
-                }}
-              >
-                <Icon name="LogOut" className="mr-2" size={16} />
-                Выйти
-              </Button>
             </div>
-          </div>
-        </Card>
+          </Card>
 
         <div className="grid grid-cols-2 gap-4 mb-6">
           <Card className="p-6">
@@ -899,7 +1014,8 @@ export default function Index() {
         </Card>
       </div>
     </div>
-  );
+    );
+  };
 
   const renderRules = () => (
     <div className="min-h-screen p-8">
