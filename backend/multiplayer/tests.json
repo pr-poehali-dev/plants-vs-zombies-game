@@ -1,0 +1,33 @@
+{
+  "tests": [
+    {
+      "name": "Join multiplayer game",
+      "method": "POST",
+      "body": {
+        "action": "join",
+        "userId": "player1",
+        "username": "TestPlayer",
+        "gameId": "test-game"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "success": true,
+        "gameId": "string"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Get game state",
+      "method": "GET",
+      "queryParams": {
+        "gameId": "test-game"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "players": [],
+        "state": "string"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}

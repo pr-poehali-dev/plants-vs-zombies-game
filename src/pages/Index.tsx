@@ -4,8 +4,10 @@ import { Card } from '@/components/ui/card';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
+import { sounds } from '@/utils/sounds';
 
-type Page = 'home' | 'game' | 'levels' | 'leaderboard' | 'profile' | 'rules';
+type Page = 'home' | 'game' | 'levels' | 'leaderboard' | 'profile' | 'rules' | 'shop' | 'auth';
+type Tool = 'plant' | 'shovel' | 'glove' | null;
 
 interface Player {
   id: number;
@@ -23,6 +25,12 @@ interface PlantType {
   damage: number;
   hp?: number;
   shootRate?: number;
+  cooldown?: number;
+}
+
+interface PlantCooldown {
+  plantId: string;
+  readyAt: number;
 }
 
 interface ZombieType {
@@ -69,14 +77,16 @@ interface Projectile {
 }
 
 const allPlants: PlantType[] = [
-  { id: 'sunflower', name: 'Подсолнух', emoji: '🌻', cost: 50, damage: 0, hp: 100 },
-  { id: 'peashooter', name: 'Горохострел', emoji: '🌱', cost: 100, damage: 20, hp: 100, shootRate: 1350 },
-  { id: 'wallnut', name: 'Орех', emoji: '🥜', cost: 150, damage: 0, hp: 400 },
-  { id: 'cactus', name: 'Кактус', emoji: '🌵', cost: 200, damage: 30, hp: 150, shootRate: 1200 },
-  { id: 'repeater', name: 'Повторитель', emoji: '🌿', cost: 200, damage: 20, hp: 100, shootRate: 700 },
-  { id: 'chomper', name: 'Кусака', emoji: '🪴', cost: 150, damage: 100, hp: 150, shootRate: 3000 },
-  { id: 'iceshooter', name: 'Ледострел', emoji: '❄️', cost: 175, damage: 15, hp: 100, shootRate: 1400 },
-  { id: 'tallnut', name: 'Большой орех', emoji: '🌰', cost: 250, damage: 0, hp: 800 },
+  { id: 'sunflower', name: 'Подсолнух', emoji: '🌻', cost: 50, damage: 0, hp: 100, cooldown: 7500 },
+  { id: 'peashooter', name: 'Горохострел', emoji: '🌱', cost: 100, damage: 20, hp: 100, shootRate: 1350, cooldown: 7500 },
+  { id: 'wallnut', name: 'Орех', emoji: '🥜', cost: 150, damage: 0, hp: 400, cooldown: 30000 },
+  { id: 'cactus', name: 'Кактус', emoji: '🌵', cost: 200, damage: 30, hp: 150, shootRate: 1200, cooldown: 7500 },
+  { id: 'repeater', name: 'Повторитель', emoji: '🌿', cost: 200, damage: 20, hp: 100, shootRate: 700, cooldown: 7500 },
+  { id: 'chomper', name: 'Кусака', emoji: '🪴', cost: 150, damage: 100, hp: 150, shootRate: 3000, cooldown: 7500 },
+  { id: 'iceshooter', name: 'Ледострел', emoji: '❄️', cost: 175, damage: 15, hp: 100, shootRate: 1400, cooldown: 7500 },
+  { id: 'tallnut', name: 'Большой орех', emoji: '🌰', cost: 250, damage: 0, hp: 800, cooldown: 30000 },
+  { id: 'potatomine', name: 'Картофельная мина', emoji: '🥔', cost: 25, damage: 200, hp: 100, cooldown: 30000 },
+  { id: 'squash', name: 'Тыква', emoji: '🎃', cost: 50, damage: 300, hp: 100, cooldown: 30000 },
 ];
 
 const zombieTypes: ZombieType[] = [
@@ -109,6 +119,11 @@ export default function Index() {
   const [levelCompleted, setLevelCompleted] = useState(false);
   const [zombiesKilled, setZombiesKilled] = useState(0);
   const [gameOver, setGameOver] = useState(false);
+  const [selectedTool, setSelectedTool] = useState<Tool>('plant');
+  const [plantCooldowns, setPlantCooldowns] = useState<PlantCooldown[]>([]);
+  const [coins, setCoins] = useState(0);
+  const [username, setUsername] = useState<string | null>(localStorage.getItem('pvz_username'));
+  const [draggedPlant, setDraggedPlant] = useState<PlacedPlant | null>(null);
 
   const spawnZombie = useCallback(() => {
     if (!gameRunning || gameOver) return;
@@ -213,6 +228,7 @@ export default function Index() {
             if (newPosition <= 0) {
               setGameOver(true);
               setGameRunning(false);
+              sounds.lose();
               return zombie;
             }
             
@@ -226,6 +242,8 @@ export default function Index() {
           setLevelCompleted(true);
           setGameRunning(false);
           setMaxUnlockedLevel(prev => Math.max(prev, currentLevel + 1));
+          setCoins(prev => prev + 100 + currentLevel * 10);
+          sounds.win();
         }
 
         return updatedZombies;
@@ -308,32 +326,67 @@ export default function Index() {
   }, [gameRunning, gameOver, levelCompleted, placedPlants, zombies, zombiesKilled, currentLevel]);
 
   const handleCellClick = (row: number, col: number) => {
-    if (!selectedPlant || !gameRunning) return;
+    if (!gameRunning) return;
 
-    const plantExists = placedPlants.some(p => p.row === row && p.col === col);
-    if (plantExists) return;
+    const plantExists = placedPlants.find(p => p.row === row && p.col === col);
 
-    const plantType = allPlants.find(p => p.id === selectedPlant);
-    if (!plantType || sun < plantType.cost) return;
+    if (selectedTool === 'shovel' && plantExists) {
+      setPlacedPlants(prev => prev.filter(p => p.id !== plantExists.id));
+      setSelectedTool('plant');
+      sounds.shovel();
+      return;
+    }
 
-    const newPlant: PlacedPlant = {
-      id: `plant-${Date.now()}`,
-      type: selectedPlant,
-      row,
-      col,
-      hp: plantType.hp || 100,
-      lastShot: 0,
-      lastSunGeneration: plantType.id === 'sunflower' ? Date.now() : undefined,
-    };
+    if (selectedTool === 'glove' && plantExists) {
+      setDraggedPlant(plantExists);
+      setPlacedPlants(prev => prev.filter(p => p.id !== plantExists.id));
+      return;
+    }
 
-    setPlacedPlants(prev => [...prev, newPlant]);
-    setSun(prev => prev - plantType.cost);
-    setSelectedPlant(null);
+    if (selectedTool === 'glove' && draggedPlant && !plantExists) {
+      const movedPlant = { ...draggedPlant, row, col, id: `plant-${Date.now()}` };
+      setPlacedPlants(prev => [...prev, movedPlant]);
+      setDraggedPlant(null);
+      setSelectedTool('plant');
+      return;
+    }
+
+    if (selectedTool === 'plant' && selectedPlant && !plantExists) {
+      const plantType = allPlants.find(p => p.id === selectedPlant);
+      if (!plantType || sun < plantType.cost) return;
+
+      const cooldown = plantCooldowns.find(c => c.plantId === selectedPlant);
+      if (cooldown && Date.now() < cooldown.readyAt) return;
+
+      const newPlant: PlacedPlant = {
+        id: `plant-${Date.now()}`,
+        type: selectedPlant,
+        row,
+        col,
+        hp: plantType.hp || 100,
+        lastShot: 0,
+        lastSunGeneration: plantType.id === 'sunflower' ? Date.now() : undefined,
+      };
+
+      setPlacedPlants(prev => [...prev, newPlant]);
+      setSun(prev => prev - plantType.cost);
+      sounds.plant();
+      
+      if (plantType.cooldown) {
+        setPlantCooldowns(prev => [
+          ...prev.filter(c => c.plantId !== selectedPlant),
+          { plantId: selectedPlant, readyAt: Date.now() + plantType.cooldown }
+        ]);
+      }
+      
+      setSelectedPlant(null);
+    }
   };
 
   const handleSunClick = (sun: FallingSun) => {
     setFallingSuns(prev => prev.filter(s => s.id !== sun.id));
     setSun(prev => prev + sun.value);
+    sounds.sunCollect();
   };
 
   const startGame = (level?: number) => {
@@ -368,11 +421,12 @@ export default function Index() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 max-w-4xl w-full">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4 max-w-5xl w-full">
         {[
           { icon: 'Gamepad2', label: 'Игра', page: 'game' as Page },
           { icon: 'Trophy', label: 'Рейтинг', page: 'leaderboard' as Page },
           { icon: 'Map', label: 'Уровни', page: 'levels' as Page },
+          { icon: 'ShoppingCart', label: 'Магазин', page: 'shop' as Page },
           { icon: 'User', label: 'Профиль', page: 'profile' as Page },
           { icon: 'BookOpen', label: 'Правила', page: 'rules' as Page },
         ].map((item, idx) => (
@@ -416,8 +470,11 @@ export default function Index() {
               {sun} солнца
             </Badge>
             <Badge variant="outline" className="text-lg px-6 py-2">
-              <Icon name="Users" size={20} className="mr-2" />
-              Онлайн: 234
+              <Icon name="Coins" className="mr-2" size={20} />
+              {coins} монет
+            </Badge>
+            <Badge variant="outline" className="text-lg px-6 py-2">
+              {currentLevel > 20 ? '🌙' : '☀️'} Уровень {currentLevel}
             </Badge>
           </div>
         </div>
@@ -440,7 +497,7 @@ export default function Index() {
             <p className="text-xl mb-4">Поздравляем! Вы защитили дом от зомби!</p>
             <p className="text-muted-foreground mb-6">Убито зомби: {zombiesKilled}</p>
             <div className="flex gap-4 justify-center">
-              {currentLevel < 12 && (
+              {currentLevel < 41 && (
                 <Button onClick={() => {
                   const nextLevel = currentLevel + 1;
                   setMaxUnlockedLevel(Math.max(maxUnlockedLevel, nextLevel));
@@ -458,23 +515,65 @@ export default function Index() {
           </Card>
         )}
 
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          {getAvailablePlants().map((plant) => (
-            <Card
-              key={plant.id}
-              className={`p-4 cursor-pointer transition-all hover:scale-105 border-2 ${
-                selectedPlant === plant.id ? 'border-primary ring-2 ring-primary' : 'border-border'
-              } ${sun < plant.cost || !gameRunning ? 'opacity-50' : ''}`}
-              onClick={() => gameRunning && sun >= plant.cost && setSelectedPlant(plant.id)}
-            >
-              <div className="text-4xl text-center mb-2">{plant.emoji}</div>
-              <p className="text-center font-medium text-sm">{plant.name}</p>
-              <p className="text-center text-xs text-muted-foreground">☀️ {plant.cost}</p>
-            </Card>
-          ))}
+        <div className="flex gap-4 mb-4">
+          <Card
+            className={`p-4 cursor-pointer transition-all hover:scale-105 border-2 ${
+              selectedTool === 'shovel' ? 'border-destructive ring-2 ring-destructive' : 'border-border'
+            }`}
+            onClick={() => setSelectedTool(selectedTool === 'shovel' ? 'plant' : 'shovel')}
+          >
+            <div className="text-4xl text-center">🪓</div>
+            <p className="text-center text-xs mt-1">Лопата</p>
+          </Card>
+          <Card
+            className={`p-4 cursor-pointer transition-all hover:scale-105 border-2 ${
+              selectedTool === 'glove' ? 'border-secondary ring-2 ring-secondary' : 'border-border'
+            }`}
+            onClick={() => setSelectedTool(selectedTool === 'glove' ? 'plant' : 'glove')}
+          >
+            <div className="text-4xl text-center">🧤</div>
+            <p className="text-center text-xs mt-1">Перчатка</p>
+          </Card>
         </div>
 
-        <Card className="p-4 bg-gradient-to-b from-green-900/20 to-green-950/20 border-2 relative">
+        <div className="grid grid-cols-5 gap-4 mb-6">
+          {getAvailablePlants().map((plant) => {
+            const cooldown = plantCooldowns.find(c => c.plantId === plant.id);
+            const isOnCooldown = cooldown && Date.now() < cooldown.readyAt;
+            const cooldownPercent = isOnCooldown ? ((cooldown!.readyAt - Date.now()) / (plant.cooldown || 1)) * 100 : 0;
+            
+            return (
+              <Card
+                key={plant.id}
+                className={`p-4 cursor-pointer transition-all hover:scale-105 border-2 relative overflow-hidden ${
+                  selectedPlant === plant.id && selectedTool === 'plant' ? 'border-primary ring-2 ring-primary' : 'border-border'
+                } ${sun < plant.cost || !gameRunning || isOnCooldown ? 'opacity-50' : ''}`}
+                onClick={() => {
+                  if (gameRunning && sun >= plant.cost && !isOnCooldown) {
+                    setSelectedPlant(plant.id);
+                    setSelectedTool('plant');
+                  }
+                }}
+              >
+                {isOnCooldown && (
+                  <div 
+                    className="absolute bottom-0 left-0 right-0 bg-muted transition-all"
+                    style={{ height: `${cooldownPercent}%` }}
+                  />
+                )}
+                <div className="text-4xl text-center mb-2 relative z-10">{plant.emoji}</div>
+                <p className="text-center font-medium text-sm relative z-10">{plant.name}</p>
+                <p className="text-center text-xs text-muted-foreground relative z-10">☀️ {plant.cost}</p>
+              </Card>
+            );
+          })}
+        </div>
+
+        <Card className={`p-4 border-2 relative ${
+          currentLevel > 20 
+            ? 'bg-gradient-to-b from-purple-950/40 to-blue-950/40' 
+            : 'bg-gradient-to-b from-green-900/20 to-green-950/20'
+        }`}>
           <div className="grid grid-rows-5 gap-2">
             {Array.from({ length: 5 }).map((_, row) => (
               <div key={row} className="grid grid-cols-9 gap-2">
@@ -568,40 +667,114 @@ export default function Index() {
     </div>
   );
 
-  const renderLevels = () => (
-    <div className="min-h-screen p-8">
-      <div className="max-w-4xl mx-auto">
-        <Button variant="outline" className="mb-6" onClick={() => setCurrentPage('home')}>
-          <Icon name="ArrowLeft" className="mr-2" size={20} />
-          Назад
-        </Button>
-        <h2 className="text-4xl font-bold mb-8">Выбор уровня</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {Array.from({ length: 12 }).map((_, idx) => (
+  const renderLevels = () => {
+    const getLevelEmoji = (level: number) => {
+      if (level === 41) return '👑';
+      if (level > 20) return '🌙';
+      return '☀️';
+    };
+
+    const getLevelTitle = (level: number) => {
+      if (level === 41) return 'Босс';
+      if (level > 20) return 'Ночь';
+      return 'День';
+    };
+
+    return (
+      <div className="min-h-screen p-8">
+        <div className="max-w-6xl mx-auto">
+          <Button variant="outline" className="mb-6" onClick={() => setCurrentPage('home')}>
+            <Icon name="ArrowLeft" className="mr-2" size={20} />
+            Назад
+          </Button>
+          <h2 className="text-4xl font-bold mb-8">Выбор уровня</h2>
+          
+          <div className="mb-8">
+            <h3 className="text-2xl font-bold mb-4 flex items-center">
+              <span className="text-3xl mr-2">☀️</span>
+              День (Уровни 1-20)
+            </h3>
+            <div className="grid grid-cols-4 md:grid-cols-5 gap-4">
+              {Array.from({ length: 20 }).map((_, idx) => (
+                <Card
+                  key={idx}
+                  className={`p-4 text-center cursor-pointer hover:scale-105 transition-all border-2 ${
+                    idx + 1 <= maxUnlockedLevel ? 'border-primary bg-card' : 'border-border opacity-50'
+                  }`}
+                  onClick={() => {
+                    if (idx + 1 <= maxUnlockedLevel) {
+                      startGame(idx + 1);
+                      setCurrentPage('game');
+                    }
+                  }}
+                >
+                  <div className="text-3xl mb-1">
+                    {idx + 1 <= maxUnlockedLevel ? getLevelEmoji(idx + 1) : '🔒'}
+                  </div>
+                  <p className="font-bold">Уровень {idx + 1}</p>
+                </Card>
+              ))}
+            </div>
+          </div>
+
+          <div className="mb-8">
+            <h3 className="text-2xl font-bold mb-4 flex items-center">
+              <span className="text-3xl mr-2">🌙</span>
+              Ночь (Уровни 21-40)
+            </h3>
+            <div className="grid grid-cols-4 md:grid-cols-5 gap-4">
+              {Array.from({ length: 20 }).map((_, idx) => {
+                const level = idx + 21;
+                return (
+                  <Card
+                    key={level}
+                    className={`p-4 text-center cursor-pointer hover:scale-105 transition-all border-2 ${
+                      level <= maxUnlockedLevel ? 'border-secondary bg-card' : 'border-border opacity-50'
+                    }`}
+                    onClick={() => {
+                      if (level <= maxUnlockedLevel) {
+                        startGame(level);
+                        setCurrentPage('game');
+                      }
+                    }}
+                  >
+                    <div className="text-3xl mb-1">
+                      {level <= maxUnlockedLevel ? getLevelEmoji(level) : '🔒'}
+                    </div>
+                    <p className="font-bold">Уровень {level}</p>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-2xl font-bold mb-4 flex items-center">
+              <span className="text-3xl mr-2">👑</span>
+              Босс-битва
+            </h3>
             <Card
-              key={idx}
-              className={`p-6 text-center cursor-pointer hover:scale-105 transition-all border-2 ${
-                idx + 1 <= maxUnlockedLevel ? 'border-primary bg-card' : 'border-border opacity-50'
+              className={`p-8 text-center cursor-pointer hover:scale-105 transition-all border-2 max-w-xs ${
+                41 <= maxUnlockedLevel ? 'border-yellow-500 bg-card' : 'border-border opacity-50'
               }`}
               onClick={() => {
-                if (idx + 1 <= maxUnlockedLevel) {
-                  startGame(idx + 1);
+                if (41 <= maxUnlockedLevel) {
+                  startGame(41);
                   setCurrentPage('game');
                 }
               }}
             >
-              <div className="text-4xl mb-2">
-                {idx + 1 <= maxUnlockedLevel ? '🌟' : '🔒'}
+              <div className="text-6xl mb-2">
+                {41 <= maxUnlockedLevel ? '🤖' : '🔒'}
               </div>
-              <p className="font-bold text-lg">Уровень {idx + 1}</p>
-              {idx + 1 <= maxUnlockedLevel && <Badge className="mt-2 bg-primary">Открыт</Badge>}
-              {idx + 1 > maxUnlockedLevel && <Badge variant="secondary" className="mt-2">Закрыт</Badge>}
+              <p className="font-bold text-2xl">Доктор Зомбосс</p>
+              <p className="text-sm text-muted-foreground mt-2">Финальная битва</p>
             </Card>
-          ))}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderLeaderboard = () => (
     <div className="min-h-screen p-8">
@@ -665,12 +838,27 @@ export default function Index() {
               🎮
             </Avatar>
             <div className="flex-1">
-              <h2 className="text-3xl font-bold mb-2">PlantMaster</h2>
+              <h2 className="text-3xl font-bold mb-2">{username || 'Игрок'}</h2>
               <div className="flex gap-2 mb-4">
-                <Badge className="bg-primary">Уровень 15</Badge>
-                <Badge variant="outline">2450 рейтинг</Badge>
+                <Badge className="bg-primary">Уровень {maxUnlockedLevel}</Badge>
+                <Badge variant="outline" className="bg-yellow-500 text-black">
+                  <Icon name="Coins" className="mr-1" size={16} />
+                  {coins} монет
+                </Badge>
               </div>
-              <p className="text-muted-foreground">Игрок с начала сезона • 128 побед • 45 поражений</p>
+              <p className="text-muted-foreground">Защитник дома • Открыто {maxUnlockedLevel} уровней</p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="mt-4"
+                onClick={() => {
+                  localStorage.removeItem('pvz_username');
+                  setUsername(null);
+                }}
+              >
+                <Icon name="LogOut" className="mr-2" size={16} />
+                Выйти
+              </Button>
             </div>
           </div>
         </Card>
@@ -678,23 +866,23 @@ export default function Index() {
         <div className="grid grid-cols-2 gap-4 mb-6">
           <Card className="p-6">
             <Icon name="Target" size={32} className="text-primary mb-2" />
-            <p className="text-2xl font-bold mb-1">73%</p>
-            <p className="text-sm text-muted-foreground">Процент побед</p>
+            <p className="text-2xl font-bold mb-1">{maxUnlockedLevel}</p>
+            <p className="text-sm text-muted-foreground">Пройдено уровней</p>
           </Card>
           <Card className="p-6">
-            <Icon name="Zap" size={32} className="text-yellow-500 mb-2" />
-            <p className="text-2xl font-bold mb-1">12</p>
-            <p className="text-sm text-muted-foreground">Победная серия</p>
+            <Icon name="Coins" size={32} className="text-yellow-500 mb-2" />
+            <p className="text-2xl font-bold mb-1">{coins}</p>
+            <p className="text-sm text-muted-foreground">Монет заработано</p>
           </Card>
           <Card className="p-6">
-            <Icon name="Clock" size={32} className="text-secondary mb-2" />
-            <p className="text-2xl font-bold mb-1">156ч</p>
-            <p className="text-sm text-muted-foreground">Время игры</p>
+            <Icon name="Flame" size={32} className="text-secondary mb-2" />
+            <p className="text-2xl font-bold mb-1">{maxUnlockedLevel > 20 ? 'Ночь' : 'День'}</p>
+            <p className="text-sm text-muted-foreground">Текущая локация</p>
           </Card>
           <Card className="p-6">
             <Icon name="Award" size={32} className="text-primary mb-2" />
-            <p className="text-2xl font-bold mb-1">24</p>
-            <p className="text-sm text-muted-foreground">Достижения</p>
+            <p className="text-2xl font-bold mb-1">{maxUnlockedLevel >= 41 ? 'Да' : 'Нет'}</p>
+            <p className="text-sm text-muted-foreground">Побеждён Зомбосс</p>
           </Card>
         </div>
 
@@ -756,9 +944,38 @@ export default function Index() {
               <li>Нажмите "Старт" чтобы начать игру</li>
               <li>Выберите растение из панели сверху</li>
               <li>Кликните по клетке поля чтобы посадить</li>
-              <li>Собирайте падающее солнце кликом</li>
+              <li>Собирайте падающее солнце кликом (☀️ = 25, ⭐ = 50)</li>
+              <li>Используйте 🪓 лопату для удаления растений</li>
+              <li>Используйте 🧤 перчатку для перемещения растений</li>
+              <li>Каждое растение имеет время перезарядки (КД)</li>
               <li>Защищайтесь от волн зомби!</li>
             </ol>
+          </Card>
+
+          <Card className="p-6">
+            <h3 className="text-2xl font-bold mb-4 flex items-center">
+              <Icon name="Map" className="mr-3 text-yellow-500" size={28} />
+              Уровни и локации
+            </h3>
+            <div className="space-y-3 text-muted-foreground">
+              <p><strong>☀️ День (1-20):</strong> Классические дневные уровни с обычными зомби</p>
+              <p><strong>🌙 Ночь (21-40):</strong> Ночные уровни с усиленными зомби</p>
+              <p><strong>👑 Босс (41):</strong> Финальная битва с Доктором Зомбоссом!</p>
+              <p className="text-sm mt-4">Новые уровни открываются после прохождения предыдущих</p>
+            </div>
+          </Card>
+
+          <Card className="p-6 bg-yellow-500/10 border-yellow-500">
+            <h3 className="text-2xl font-bold mb-4 flex items-center">
+              <Icon name="Coins" className="mr-3 text-yellow-500" size={28} />
+              Монеты и магазин
+            </h3>
+            <div className="space-y-2 text-muted-foreground">
+              <p>Зарабатывайте монеты за прохождение уровней!</p>
+              <p>• За победу: +100 монет</p>
+              <p>• Бонус сложности: +10 за каждый уровень</p>
+              <p className="text-sm mt-4">Тратьте монеты в <strong>Магазине Дейва</strong> на улучшения!</p>
+            </div>
           </Card>
 
           <Card className="p-6 border-2 border-primary">
@@ -775,6 +992,133 @@ export default function Index() {
     </div>
   );
 
+  const renderShop = () => (
+    <div className="min-h-screen p-8">
+      <div className="max-w-4xl mx-auto">
+        <Button variant="outline" className="mb-6" onClick={() => setCurrentPage('home')}>
+          <Icon name="ArrowLeft" className="mr-2" size={20} />
+          Назад
+        </Button>
+        <div className="flex justify-between items-center mb-8">
+          <h2 className="text-4xl font-bold">Магазин Дейва</h2>
+          <Badge className="text-2xl px-6 py-3 bg-yellow-500 text-black">
+            <Icon name="Coins" className="mr-2" size={24} />
+            {coins} монет
+          </Badge>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card className="p-6 border-2 hover:border-primary transition-all">
+            <div className="flex items-start gap-4">
+              <div className="text-6xl">🌻</div>
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold mb-2">Дополнительный слот</h3>
+                <p className="text-muted-foreground mb-4">Открывает ещё один слот для растений</p>
+                <Button className="w-full" disabled>
+                  <Icon name="Lock" className="mr-2" size={20} />
+                  500 монет
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6 border-2 hover:border-primary transition-all">
+            <div className="flex items-start gap-4">
+              <div className="text-6xl">⚡</div>
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold mb-2">Ускорение КД</h3>
+                <p className="text-muted-foreground mb-4">Уменьшает время перезарядки на 20%</p>
+                <Button className="w-full" disabled>
+                  <Icon name="Lock" className="mr-2" size={20} />
+                  750 монет
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6 border-2 hover:border-primary transition-all">
+            <div className="flex items-start gap-4">
+              <div className="text-6xl">💰</div>
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold mb-2">Больше солнца</h3>
+                <p className="text-muted-foreground mb-4">Начинайте игру с 250 солнца</p>
+                <Button className="w-full" disabled>
+                  <Icon name="Lock" className="mr-2" size={20} />
+                  1000 монет
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6 border-2 hover:border-primary transition-all">
+            <div className="flex items-start gap-4">
+              <div className="text-6xl">🎵</div>
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold mb-2">Музыкальная тема</h3>
+                <p className="text-muted-foreground mb-4">Разблокировать новый саундтрек</p>
+                <Button className="w-full" disabled>
+                  <Icon name="Lock" className="mr-2" size={20} />
+                  300 монет
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        <Card className="mt-8 p-6 bg-primary/10 border-primary">
+          <h3 className="text-xl font-bold mb-4">💡 Как заработать монеты?</h3>
+          <ul className="space-y-2 text-muted-foreground">
+            <li>• Проходите уровни: +100 монет за победу</li>
+            <li>• Бонус за сложность: +10 монет за каждый уровень</li>
+            <li>• Побеждайте зомби: +5 монет за каждого</li>
+          </ul>
+        </Card>
+      </div>
+    </div>
+  );
+
+  const renderAuth = () => {
+    const [input, setInput] = useState('');
+
+    const handleLogin = () => {
+      if (input.trim()) {
+        localStorage.setItem('pvz_username', input.trim());
+        setUsername(input.trim());
+        setCurrentPage('home');
+      }
+    };
+
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8">
+        <Card className="p-8 max-w-md w-full border-2 border-primary">
+          <div className="text-center mb-6">
+            <div className="text-6xl mb-4">🌻🧟</div>
+            <h2 className="text-3xl font-bold mb-2">Plants vs Zombies</h2>
+            <p className="text-muted-foreground">Введите ваше имя</p>
+          </div>
+          <div className="space-y-4">
+            <input
+              type="text"
+              className="w-full p-3 rounded-lg bg-background border-2 border-border focus:border-primary outline-none"
+              placeholder="Ваше имя"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+            />
+            <Button onClick={handleLogin} className="w-full" size="lg">
+              <Icon name="LogIn" className="mr-2" size={20} />
+              Играть
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  };
+
+  if (!username) {
+    return renderAuth();
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-background/95">
       {currentPage === 'home' && renderHome()}
@@ -783,6 +1127,7 @@ export default function Index() {
       {currentPage === 'leaderboard' && renderLeaderboard()}
       {currentPage === 'profile' && renderProfile()}
       {currentPage === 'rules' && renderRules()}
+      {currentPage === 'shop' && renderShop()}
     </div>
   );
 }
