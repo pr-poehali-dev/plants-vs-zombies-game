@@ -122,11 +122,24 @@ export default function Index() {
   const [gameOver, setGameOver] = useState(false);
   const [selectedTool, setSelectedTool] = useState<Tool>('plant');
   const [plantCooldowns, setPlantCooldowns] = useState<PlantCooldown[]>([]);
-  const [coins, setCoins] = useState(0);
+  const [coins, setCoins] = useState(() => {
+    const saved = localStorage.getItem('pvz_coins');
+    return saved ? parseInt(saved) : 0;
+  });
   const [username, setUsername] = useState<string | null>(localStorage.getItem('pvz_username'));
   const [draggedPlant, setDraggedPlant] = useState<PlacedPlant | null>(null);
   const [gameMode, setGameMode] = useState<GameMode>('2d');
   const [gloveCooldown, setGloveCooldown] = useState<number>(0);
+  
+  const [shopUpgrades, setShopUpgrades] = useState(() => {
+    const saved = localStorage.getItem('pvz_shop_upgrades');
+    return saved ? JSON.parse(saved) : {
+      extraSlot: false,
+      cdReduction: false,
+      moreSun: false,
+      musicTheme: false,
+    };
+  });
 
   const spawnZombie = useCallback(() => {
     if (!gameRunning || gameOver) return;
@@ -181,8 +194,10 @@ export default function Index() {
   }, [gameRunning, gameOver]);
 
   const getAvailablePlants = useCallback(() => {
-    return allPlants.slice(0, Math.min(2 + currentLevel, allPlants.length));
-  }, [currentLevel]);
+    const baseSlots = 2 + currentLevel;
+    const totalSlots = shopUpgrades.extraSlot ? baseSlots + 1 : baseSlots;
+    return allPlants.slice(0, Math.min(totalSlots, allPlants.length));
+  }, [currentLevel, shopUpgrades.extraSlot]);
 
   useEffect(() => {
     if (!gameRunning || gameOver) return;
@@ -309,6 +324,7 @@ export default function Index() {
                   const newHp = z.hp - proj.damage;
                   if (newHp <= 0) {
                     setZombiesKilled(prev => prev + 1);
+                    setCoins(prev => prev + 5);
                   }
                   return { ...z, hp: newHp };
                 }
@@ -327,6 +343,10 @@ export default function Index() {
 
     return () => clearInterval(gameLoop);
   }, [gameRunning, gameOver, levelCompleted, placedPlants, zombies, zombiesKilled, currentLevel]);
+
+  useEffect(() => {
+    localStorage.setItem('pvz_coins', coins.toString());
+  }, [coins]);
 
   const handleCellClick = (row: number, col: number) => {
     if (!gameRunning) return;
@@ -378,9 +398,10 @@ export default function Index() {
       sounds.plant();
       
       if (plantType.cooldown) {
+        const cdMultiplier = shopUpgrades.cdReduction ? 0.8 : 1;
         setPlantCooldowns(prev => [
           ...prev.filter(c => c.plantId !== selectedPlant),
-          { plantId: selectedPlant, readyAt: Date.now() + plantType.cooldown }
+          { plantId: selectedPlant, readyAt: Date.now() + (plantType.cooldown * cdMultiplier) }
         ]);
       }
       
@@ -394,6 +415,15 @@ export default function Index() {
     sounds.sunCollect();
   };
 
+  const buyUpgrade = (upgrade: keyof typeof shopUpgrades, cost: number) => {
+    if (coins >= cost && !shopUpgrades[upgrade]) {
+      setCoins(prev => prev - cost);
+      setShopUpgrades(prev => ({ ...prev, [upgrade]: true }));
+      localStorage.setItem('pvz_shop_upgrades', JSON.stringify({ ...shopUpgrades, [upgrade]: true }));
+      sounds.plantPlace();
+    }
+  };
+
   const startGame = (level?: number) => {
     setGameRunning(true);
     setGameOver(false);
@@ -402,7 +432,7 @@ export default function Index() {
     setZombies([]);
     setFallingSuns([]);
     setProjectiles([]);
-    setSun(150);
+    setSun(shopUpgrades.moreSun ? 250 : 150);
     setZombiesKilled(0);
     setWave(1);
     if (level) setCurrentLevel(level);
@@ -1124,57 +1154,141 @@ export default function Index() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card className="p-6 border-2 hover:border-primary transition-all">
+          <Card className={`p-6 border-2 transition-all ${shopUpgrades.extraSlot ? 'border-green-500 bg-green-500/10' : 'hover:border-primary'}`}>
             <div className="flex items-start gap-4">
               <div className="text-6xl">🌻</div>
               <div className="flex-1">
-                <h3 className="text-2xl font-bold mb-2">Дополнительный слот</h3>
+                <h3 className="text-2xl font-bold mb-2">
+                  Дополнительный слот
+                  {shopUpgrades.extraSlot && <Badge className="ml-2 bg-green-500">Куплено</Badge>}
+                </h3>
                 <p className="text-muted-foreground mb-4">Открывает ещё один слот для растений</p>
-                <Button className="w-full" disabled>
-                  <Icon name="Lock" className="mr-2" size={20} />
-                  500 монет
+                <Button 
+                  className="w-full" 
+                  disabled={shopUpgrades.extraSlot || coins < 500}
+                  onClick={() => buyUpgrade('extraSlot', 500)}
+                >
+                  {shopUpgrades.extraSlot ? (
+                    <>
+                      <Icon name="Check" className="mr-2" size={20} />
+                      Куплено
+                    </>
+                  ) : coins < 500 ? (
+                    <>
+                      <Icon name="Lock" className="mr-2" size={20} />
+                      500 монет
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="Coins" className="mr-2" size={20} />
+                      Купить за 500
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
           </Card>
 
-          <Card className="p-6 border-2 hover:border-primary transition-all">
+          <Card className={`p-6 border-2 transition-all ${shopUpgrades.cdReduction ? 'border-green-500 bg-green-500/10' : 'hover:border-primary'}`}>
             <div className="flex items-start gap-4">
               <div className="text-6xl">⚡</div>
               <div className="flex-1">
-                <h3 className="text-2xl font-bold mb-2">Ускорение КД</h3>
+                <h3 className="text-2xl font-bold mb-2">
+                  Ускорение КД
+                  {shopUpgrades.cdReduction && <Badge className="ml-2 bg-green-500">Куплено</Badge>}
+                </h3>
                 <p className="text-muted-foreground mb-4">Уменьшает время перезарядки на 20%</p>
-                <Button className="w-full" disabled>
-                  <Icon name="Lock" className="mr-2" size={20} />
-                  750 монет
+                <Button 
+                  className="w-full"
+                  disabled={shopUpgrades.cdReduction || coins < 750}
+                  onClick={() => buyUpgrade('cdReduction', 750)}
+                >
+                  {shopUpgrades.cdReduction ? (
+                    <>
+                      <Icon name="Check" className="mr-2" size={20} />
+                      Куплено
+                    </>
+                  ) : coins < 750 ? (
+                    <>
+                      <Icon name="Lock" className="mr-2" size={20} />
+                      750 монет
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="Coins" className="mr-2" size={20} />
+                      Купить за 750
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
           </Card>
 
-          <Card className="p-6 border-2 hover:border-primary transition-all">
+          <Card className={`p-6 border-2 transition-all ${shopUpgrades.moreSun ? 'border-green-500 bg-green-500/10' : 'hover:border-primary'}`}>
             <div className="flex items-start gap-4">
               <div className="text-6xl">💰</div>
               <div className="flex-1">
-                <h3 className="text-2xl font-bold mb-2">Больше солнца</h3>
+                <h3 className="text-2xl font-bold mb-2">
+                  Больше солнца
+                  {shopUpgrades.moreSun && <Badge className="ml-2 bg-green-500">Куплено</Badge>}
+                </h3>
                 <p className="text-muted-foreground mb-4">Начинайте игру с 250 солнца</p>
-                <Button className="w-full" disabled>
-                  <Icon name="Lock" className="mr-2" size={20} />
-                  1000 монет
+                <Button 
+                  className="w-full"
+                  disabled={shopUpgrades.moreSun || coins < 1000}
+                  onClick={() => buyUpgrade('moreSun', 1000)}
+                >
+                  {shopUpgrades.moreSun ? (
+                    <>
+                      <Icon name="Check" className="mr-2" size={20} />
+                      Куплено
+                    </>
+                  ) : coins < 1000 ? (
+                    <>
+                      <Icon name="Lock" className="mr-2" size={20} />
+                      1000 монет
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="Coins" className="mr-2" size={20} />
+                      Купить за 1000
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
           </Card>
 
-          <Card className="p-6 border-2 hover:border-primary transition-all">
+          <Card className={`p-6 border-2 transition-all ${shopUpgrades.musicTheme ? 'border-green-500 bg-green-500/10' : 'hover:border-primary'}`}>
             <div className="flex items-start gap-4">
               <div className="text-6xl">🎵</div>
               <div className="flex-1">
-                <h3 className="text-2xl font-bold mb-2">Музыкальная тема</h3>
+                <h3 className="text-2xl font-bold mb-2">
+                  Музыкальная тема
+                  {shopUpgrades.musicTheme && <Badge className="ml-2 bg-green-500">Куплено</Badge>}
+                </h3>
                 <p className="text-muted-foreground mb-4">Разблокировать новый саундтрек</p>
-                <Button className="w-full" disabled>
-                  <Icon name="Lock" className="mr-2" size={20} />
-                  300 монет
+                <Button 
+                  className="w-full"
+                  disabled={shopUpgrades.musicTheme || coins < 300}
+                  onClick={() => buyUpgrade('musicTheme', 300)}
+                >
+                  {shopUpgrades.musicTheme ? (
+                    <>
+                      <Icon name="Check" className="mr-2" size={20} />
+                      Куплено
+                    </>
+                  ) : coins < 300 ? (
+                    <>
+                      <Icon name="Lock" className="mr-2" size={20} />
+                      300 монет
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="Coins" className="mr-2" size={20} />
+                      Купить за 300
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
