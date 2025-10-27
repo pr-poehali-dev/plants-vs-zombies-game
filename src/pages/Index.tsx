@@ -57,6 +57,8 @@ interface FallingSun {
   row: number;
   col: number;
   isCollected: boolean;
+  value: number;
+  isBig: boolean;
 }
 
 interface Projectile {
@@ -103,6 +105,8 @@ export default function Index() {
   const [gameRunning, setGameRunning] = useState(false);
   const [wave, setWave] = useState(1);
   const [currentLevel, setCurrentLevel] = useState(1);
+  const [maxUnlockedLevel, setMaxUnlockedLevel] = useState(1);
+  const [levelCompleted, setLevelCompleted] = useState(false);
   const [zombiesKilled, setZombiesKilled] = useState(0);
   const [gameOver, setGameOver] = useState(false);
 
@@ -140,19 +144,22 @@ export default function Index() {
     
     const row = Math.floor(Math.random() * 5);
     const col = Math.floor(Math.random() * 9);
+    const isBig = Math.random() < 0.25;
     
     const newSun: FallingSun = {
       id: `sun-${Date.now()}-${Math.random()}`,
       row,
       col,
       isCollected: false,
+      value: isBig ? 50 : 25,
+      isBig,
     };
     
     setFallingSuns(prev => [...prev, newSun]);
     
     setTimeout(() => {
       setFallingSuns(prev => prev.filter(s => s.id !== newSun.id));
-    }, 5000);
+    }, 7000);
   }, [gameRunning, gameOver]);
 
   const getAvailablePlants = useCallback(() => {
@@ -163,31 +170,36 @@ export default function Index() {
     if (!gameRunning || gameOver) return;
 
     const zombieSpawner = setInterval(() => {
-      if (Math.random() > 0.3) {
+      if (Math.random() > 0.5) {
         spawnZombie();
       }
-    }, 3000);
+    }, 4000);
 
-    const sunSpawner = setInterval(() => {
-      if (Math.random() > 0.5) {
-        spawnFallingSun();
-      }
-    }, 10000);
+    const scheduleNextSun = () => {
+      const delay = 5000 + Math.random() * 3000;
+      setTimeout(() => {
+        if (gameRunning && !gameOver) {
+          spawnFallingSun();
+          scheduleNextSun();
+        }
+      }, delay);
+    };
+    
+    scheduleNextSun();
 
     return () => {
       clearInterval(zombieSpawner);
-      clearInterval(sunSpawner);
     };
   }, [gameRunning, gameOver, spawnZombie, spawnFallingSun]);
 
   useEffect(() => {
-    if (!gameRunning || gameOver) return;
+    if (!gameRunning || gameOver || levelCompleted) return;
 
     const gameLoop = setInterval(() => {
       const now = Date.now();
 
       setZombies(prevZombies => {
-        return prevZombies.map(zombie => {
+        const updatedZombies = prevZombies.map(zombie => {
           const plantsInRow = placedPlants.filter(p => p.row === zombie.row && p.col >= zombie.position - 1);
           
           if (plantsInRow.length > 0 && zombie.position <= plantsInRow[0].col + 1) {
@@ -209,6 +221,14 @@ export default function Index() {
           
           return zombie;
         });
+
+        if (zombiesKilled >= 20 && updatedZombies.length === 0 && gameRunning) {
+          setLevelCompleted(true);
+          setGameRunning(false);
+          setMaxUnlockedLevel(prev => Math.max(prev, currentLevel + 1));
+        }
+
+        return updatedZombies;
       });
 
       setPlacedPlants(prevPlants => {
@@ -285,7 +305,7 @@ export default function Index() {
     }, 100);
 
     return () => clearInterval(gameLoop);
-  }, [gameRunning, gameOver, placedPlants, zombies]);
+  }, [gameRunning, gameOver, levelCompleted, placedPlants, zombies, zombiesKilled, currentLevel]);
 
   const handleCellClick = (row: number, col: number) => {
     if (!selectedPlant || !gameRunning) return;
@@ -311,14 +331,15 @@ export default function Index() {
     setSelectedPlant(null);
   };
 
-  const handleSunClick = (sunId: string) => {
-    setFallingSuns(prev => prev.filter(s => s.id !== sunId));
-    setSun(prev => prev + 25);
+  const handleSunClick = (sun: FallingSun) => {
+    setFallingSuns(prev => prev.filter(s => s.id !== sun.id));
+    setSun(prev => prev + sun.value);
   };
 
   const startGame = (level?: number) => {
     setGameRunning(true);
     setGameOver(false);
+    setLevelCompleted(false);
     setPlacedPlants([]);
     setZombies([]);
     setFallingSuns([]);
@@ -401,15 +422,39 @@ export default function Index() {
           </div>
         </div>
 
-        {gameOver && (
+        {gameOver && !levelCompleted && (
           <Card className="p-8 mb-6 text-center border-destructive border-2">
             <h2 className="text-4xl font-bold mb-4 text-destructive">Игра окончена!</h2>
             <p className="text-xl mb-4">Зомби добрались до вашего дома!</p>
             <p className="text-muted-foreground mb-6">Убито зомби: {zombiesKilled}</p>
-            <Button onClick={startGame} size="lg" className="bg-primary">
+            <Button onClick={() => startGame(currentLevel)} size="lg" className="bg-primary">
               <Icon name="RotateCcw" className="mr-2" size={20} />
               Начать заново
             </Button>
+          </Card>
+        )}
+
+        {levelCompleted && (
+          <Card className="p-8 mb-6 text-center border-primary border-2 bg-primary/10">
+            <h2 className="text-4xl font-bold mb-4 text-primary">🎉 Уровень пройден!</h2>
+            <p className="text-xl mb-4">Поздравляем! Вы защитили дом от зомби!</p>
+            <p className="text-muted-foreground mb-6">Убито зомби: {zombiesKilled}</p>
+            <div className="flex gap-4 justify-center">
+              {currentLevel < 12 && (
+                <Button onClick={() => {
+                  const nextLevel = currentLevel + 1;
+                  setMaxUnlockedLevel(Math.max(maxUnlockedLevel, nextLevel));
+                  startGame(nextLevel);
+                }} size="lg" className="bg-primary">
+                  <Icon name="ArrowRight" className="mr-2" size={20} />
+                  Следующий уровень
+                </Button>
+              )}
+              <Button onClick={() => setCurrentPage('levels')} size="lg" variant="outline">
+                <Icon name="Map" className="mr-2" size={20} />
+                Выбор уровня
+              </Button>
+            </div>
           </Card>
         )}
 
@@ -479,10 +524,12 @@ export default function Index() {
                           className="absolute cursor-pointer animate-bounce z-10"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleSunClick(sunHere.id);
+                            handleSunClick(sunHere);
                           }}
                         >
-                          <span className="text-4xl">☀️</span>
+                          <span className={sunHere.isBig ? 'text-6xl' : 'text-4xl'}>
+                            {sunHere.isBig ? '🌟' : '☀️'}
+                          </span>
                         </div>
                       )}
 
@@ -499,7 +546,11 @@ export default function Index() {
           </div>
         </Card>
 
-        <div className="mt-6 grid grid-cols-3 gap-4">
+        <div className="mt-6 grid grid-cols-4 gap-4">
+          <Card className="p-4">
+            <p className="text-sm text-muted-foreground mb-2">Уровень</p>
+            <p className="text-2xl font-bold">{currentLevel}</p>
+          </Card>
           <Card className="p-4">
             <p className="text-sm text-muted-foreground mb-2">Волна</p>
             <p className="text-2xl font-bold">{wave} / 10</p>
@@ -530,21 +581,21 @@ export default function Index() {
             <Card
               key={idx}
               className={`p-6 text-center cursor-pointer hover:scale-105 transition-all border-2 ${
-                idx < 8 ? 'border-primary bg-card' : 'border-border opacity-50'
+                idx + 1 <= maxUnlockedLevel ? 'border-primary bg-card' : 'border-border opacity-50'
               }`}
               onClick={() => {
-                if (idx < 8) {
+                if (idx + 1 <= maxUnlockedLevel) {
                   startGame(idx + 1);
                   setCurrentPage('game');
                 }
               }}
             >
               <div className="text-4xl mb-2">
-                {idx < 8 ? '🌟' : '🔒'}
+                {idx + 1 <= maxUnlockedLevel ? '🌟' : '🔒'}
               </div>
               <p className="font-bold text-lg">Уровень {idx + 1}</p>
-              {idx < 8 && <Badge className="mt-2 bg-primary">Открыт</Badge>}
-              {idx >= 8 && <Badge variant="secondary" className="mt-2">Закрыт</Badge>}
+              {idx + 1 <= maxUnlockedLevel && <Badge className="mt-2 bg-primary">Открыт</Badge>}
+              {idx + 1 > maxUnlockedLevel && <Badge variant="secondary" className="mt-2">Закрыт</Badge>}
             </Card>
           ))}
         </div>
