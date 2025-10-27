@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar } from '@/components/ui/avatar';
@@ -21,6 +21,8 @@ interface PlantType {
   emoji: string;
   cost: number;
   damage: number;
+  hp?: number;
+  shootRate?: number;
 }
 
 interface ZombieType {
@@ -28,18 +30,52 @@ interface ZombieType {
   name: string;
   emoji: string;
   hp: number;
+  speed: number;
+}
+
+interface PlacedPlant {
+  id: string;
+  type: string;
+  row: number;
+  col: number;
+  hp: number;
+  lastShot: number;
+  lastSunGeneration?: number;
+}
+
+interface ActiveZombie {
+  id: string;
+  type: string;
+  row: number;
+  position: number;
+  hp: number;
+  isEating: boolean;
+}
+
+interface FallingSun {
+  id: string;
+  row: number;
+  col: number;
+  isCollected: boolean;
+}
+
+interface Projectile {
+  id: string;
+  row: number;
+  position: number;
+  damage: number;
 }
 
 const plants: PlantType[] = [
-  { id: 'sunflower', name: 'Подсолнух', emoji: '🌻', cost: 50, damage: 0 },
-  { id: 'peashooter', name: 'Горохострел', emoji: '🌱', cost: 100, damage: 20 },
-  { id: 'wallnut', name: 'Орех', emoji: '🥜', cost: 150, damage: 0 },
-  { id: 'cactus', name: 'Кактус', emoji: '🌵', cost: 200, damage: 30 },
+  { id: 'sunflower', name: 'Подсолнух', emoji: '🌻', cost: 50, damage: 0, hp: 100 },
+  { id: 'peashooter', name: 'Горохострел', emoji: '🌱', cost: 100, damage: 20, hp: 100, shootRate: 1500 },
+  { id: 'wallnut', name: 'Орех', emoji: '🥜', cost: 150, damage: 0, hp: 400 },
+  { id: 'cactus', name: 'Кактус', emoji: '🌵', cost: 200, damage: 30, hp: 150, shootRate: 1200 },
 ];
 
-const zombies: ZombieType[] = [
-  { id: 'basic', name: 'Обычный', emoji: '🧟', hp: 100 },
-  { id: 'cone', name: 'С ведром', emoji: '🧟‍♂️', hp: 200 },
+const zombieTypes: ZombieType[] = [
+  { id: 'basic', name: 'Обычный', emoji: '🧟', hp: 100, speed: 0.5 },
+  { id: 'cone', name: 'С ведром', emoji: '🧟‍♂️', hp: 200, speed: 0.4 },
 ];
 
 const mockPlayers: Player[] = [
@@ -54,6 +90,222 @@ export default function Index() {
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [sun, setSun] = useState(150);
   const [selectedPlant, setSelectedPlant] = useState<string | null>(null);
+  const [placedPlants, setPlacedPlants] = useState<PlacedPlant[]>([]);
+  const [zombies, setZombies] = useState<ActiveZombie[]>([]);
+  const [fallingSuns, setFallingSuns] = useState<FallingSun[]>([]);
+  const [projectiles, setProjectiles] = useState<Projectile[]>([]);
+  const [gameRunning, setGameRunning] = useState(false);
+  const [wave, setWave] = useState(1);
+  const [zombiesKilled, setZombiesKilled] = useState(0);
+  const [gameOver, setGameOver] = useState(false);
+
+  const spawnZombie = useCallback(() => {
+    if (!gameRunning || gameOver) return;
+    
+    const row = Math.floor(Math.random() * 5);
+    const type = Math.random() > 0.7 ? 'cone' : 'basic';
+    const zombieType = zombieTypes.find(z => z.id === type)!;
+    
+    const newZombie: ActiveZombie = {
+      id: `zombie-${Date.now()}-${Math.random()}`,
+      type,
+      row,
+      position: 9,
+      hp: zombieType.hp,
+      isEating: false,
+    };
+    
+    setZombies(prev => [...prev, newZombie]);
+  }, [gameRunning, gameOver]);
+
+  const spawnFallingSun = useCallback(() => {
+    if (!gameRunning || gameOver) return;
+    
+    const row = Math.floor(Math.random() * 5);
+    const col = Math.floor(Math.random() * 9);
+    
+    const newSun: FallingSun = {
+      id: `sun-${Date.now()}-${Math.random()}`,
+      row,
+      col,
+      isCollected: false,
+    };
+    
+    setFallingSuns(prev => [...prev, newSun]);
+    
+    setTimeout(() => {
+      setFallingSuns(prev => prev.filter(s => s.id !== newSun.id));
+    }, 5000);
+  }, [gameRunning, gameOver]);
+
+  useEffect(() => {
+    if (!gameRunning || gameOver) return;
+
+    const zombieSpawner = setInterval(() => {
+      if (Math.random() > 0.3) {
+        spawnZombie();
+      }
+    }, 3000);
+
+    const sunSpawner = setInterval(() => {
+      if (Math.random() > 0.5) {
+        spawnFallingSun();
+      }
+    }, 10000);
+
+    return () => {
+      clearInterval(zombieSpawner);
+      clearInterval(sunSpawner);
+    };
+  }, [gameRunning, gameOver, spawnZombie, spawnFallingSun]);
+
+  useEffect(() => {
+    if (!gameRunning || gameOver) return;
+
+    const gameLoop = setInterval(() => {
+      const now = Date.now();
+
+      setZombies(prevZombies => {
+        return prevZombies.map(zombie => {
+          const plantsInRow = placedPlants.filter(p => p.row === zombie.row && p.col >= zombie.position - 1);
+          
+          if (plantsInRow.length > 0 && zombie.position <= plantsInRow[0].col + 1) {
+            return { ...zombie, isEating: true };
+          }
+
+          if (!zombie.isEating) {
+            const zombieType = zombieTypes.find(z => z.id === zombie.type)!;
+            const newPosition = zombie.position - zombieType.speed * 0.1;
+            
+            if (newPosition <= 0) {
+              setGameOver(true);
+              setGameRunning(false);
+              return zombie;
+            }
+            
+            return { ...zombie, position: newPosition };
+          }
+          
+          return zombie;
+        });
+      });
+
+      setPlacedPlants(prevPlants => {
+        return prevPlants.map(plant => {
+          const zombiesInRow = zombies.filter(z => z.row === plant.row && z.position <= plant.col + 1 && z.position >= plant.col - 0.5);
+          
+          if (zombiesInRow.length > 0) {
+            return { ...plant, hp: plant.hp - 5 };
+          }
+
+          if (plant.type === 'sunflower') {
+            if (!plant.lastSunGeneration || now - plant.lastSunGeneration > 10000) {
+              setSun(prev => prev + 25);
+              return { ...plant, lastSunGeneration: now };
+            }
+          }
+
+          const plantType = plants.find(p => p.id === plant.type)!;
+          if (plantType.damage > 0 && plantType.shootRate) {
+            if (!plant.lastShot || now - plant.lastShot > plantType.shootRate) {
+              const zombiesInLane = zombies.filter(z => z.row === plant.row && z.position > plant.col);
+              
+              if (zombiesInLane.length > 0) {
+                const newProjectile: Projectile = {
+                  id: `proj-${Date.now()}-${Math.random()}`,
+                  row: plant.row,
+                  position: plant.col + 1,
+                  damage: plantType.damage,
+                };
+                
+                setProjectiles(prev => [...prev, newProjectile]);
+                return { ...plant, lastShot: now };
+              }
+            }
+          }
+
+          return plant;
+        }).filter(plant => plant.hp > 0);
+      });
+
+      setProjectiles(prevProjectiles => {
+        const updatedProjectiles = prevProjectiles.map(proj => ({
+          ...proj,
+          position: proj.position + 0.3,
+        })).filter(proj => proj.position < 10);
+
+        updatedProjectiles.forEach(proj => {
+          const hitZombies = zombies.filter(
+            z => z.row === proj.row && 
+            Math.abs(z.position - proj.position) < 0.5
+          );
+
+          if (hitZombies.length > 0) {
+            setZombies(prevZombies => {
+              return prevZombies.map(z => {
+                if (hitZombies.some(hz => hz.id === z.id)) {
+                  const newHp = z.hp - proj.damage;
+                  if (newHp <= 0) {
+                    setZombiesKilled(prev => prev + 1);
+                  }
+                  return { ...z, hp: newHp };
+                }
+                return z;
+              }).filter(z => z.hp > 0);
+            });
+
+            setProjectiles(prev => prev.filter(p => p.id !== proj.id));
+          }
+        });
+
+        return updatedProjectiles;
+      });
+
+    }, 100);
+
+    return () => clearInterval(gameLoop);
+  }, [gameRunning, gameOver, placedPlants, zombies]);
+
+  const handleCellClick = (row: number, col: number) => {
+    if (!selectedPlant || !gameRunning) return;
+
+    const plantExists = placedPlants.some(p => p.row === row && p.col === col);
+    if (plantExists) return;
+
+    const plantType = plants.find(p => p.id === selectedPlant);
+    if (!plantType || sun < plantType.cost) return;
+
+    const newPlant: PlacedPlant = {
+      id: `plant-${Date.now()}`,
+      type: selectedPlant,
+      row,
+      col,
+      hp: plantType.hp || 100,
+      lastShot: 0,
+      lastSunGeneration: plantType.id === 'sunflower' ? Date.now() : undefined,
+    };
+
+    setPlacedPlants(prev => [...prev, newPlant]);
+    setSun(prev => prev - plantType.cost);
+    setSelectedPlant(null);
+  };
+
+  const handleSunClick = (sunId: string) => {
+    setFallingSuns(prev => prev.filter(s => s.id !== sunId));
+    setSun(prev => prev + 25);
+  };
+
+  const startGame = () => {
+    setGameRunning(true);
+    setGameOver(false);
+    setPlacedPlants([]);
+    setZombies([]);
+    setFallingSuns([]);
+    setProjectiles([]);
+    setSun(150);
+    setZombiesKilled(0);
+    setWave(1);
+  };
 
   const renderHome = () => (
     <div className="min-h-screen flex flex-col items-center justify-center p-8">
@@ -104,6 +356,18 @@ export default function Index() {
             Назад
           </Button>
           <div className="flex items-center gap-4">
+            {!gameRunning && !gameOver && (
+              <Button onClick={startGame} className="bg-primary">
+                <Icon name="Play" className="mr-2" size={20} />
+                Старт
+              </Button>
+            )}
+            {gameRunning && (
+              <Button onClick={() => setGameRunning(false)} variant="destructive">
+                <Icon name="Pause" className="mr-2" size={20} />
+                Пауза
+              </Button>
+            )}
             <Badge className="text-lg px-6 py-2 bg-yellow-500 text-black">
               <Icon name="Sun" className="mr-2" size={20} />
               {sun} солнца
@@ -115,14 +379,26 @@ export default function Index() {
           </div>
         </div>
 
+        {gameOver && (
+          <Card className="p-8 mb-6 text-center border-destructive border-2">
+            <h2 className="text-4xl font-bold mb-4 text-destructive">Игра окончена!</h2>
+            <p className="text-xl mb-4">Зомби добрались до вашего дома!</p>
+            <p className="text-muted-foreground mb-6">Убито зомби: {zombiesKilled}</p>
+            <Button onClick={startGame} size="lg" className="bg-primary">
+              <Icon name="RotateCcw" className="mr-2" size={20} />
+              Начать заново
+            </Button>
+          </Card>
+        )}
+
         <div className="grid grid-cols-4 gap-4 mb-6">
           {plants.map((plant) => (
             <Card
               key={plant.id}
               className={`p-4 cursor-pointer transition-all hover:scale-105 border-2 ${
                 selectedPlant === plant.id ? 'border-primary ring-2 ring-primary' : 'border-border'
-              } ${sun < plant.cost ? 'opacity-50' : ''}`}
-              onClick={() => sun >= plant.cost && setSelectedPlant(plant.id)}
+              } ${sun < plant.cost || !gameRunning ? 'opacity-50' : ''}`}
+              onClick={() => gameRunning && sun >= plant.cost && setSelectedPlant(plant.id)}
             >
               <div className="text-4xl text-center mb-2">{plant.emoji}</div>
               <p className="text-center font-medium text-sm">{plant.name}</p>
@@ -131,21 +407,71 @@ export default function Index() {
           ))}
         </div>
 
-        <Card className="p-8 bg-gradient-to-b from-green-900/20 to-green-950/20 border-2">
-          <div className="grid grid-rows-5 gap-3">
+        <Card className="p-4 bg-gradient-to-b from-green-900/20 to-green-950/20 border-2 relative">
+          <div className="grid grid-rows-5 gap-2">
             {Array.from({ length: 5 }).map((_, row) => (
-              <div key={row} className="grid grid-cols-9 gap-3">
-                {Array.from({ length: 9 }).map((_, col) => (
-                  <div
-                    key={`${row}-${col}`}
-                    className="aspect-square bg-background/30 rounded-lg border-2 border-border/50 hover:bg-primary/20 transition-all cursor-pointer flex items-center justify-center text-3xl"
-                  >
-                    {col === 0 && row === 1 && <span className="animate-pulse">🌻</span>}
-                    {col === 2 && row === 1 && <span className="animate-pulse">🌱</span>}
-                    {col === 7 && row === 1 && <span style={{ animation: 'shake 1s infinite' }}>🧟</span>}
-                    {col === 8 && row === 3 && <span style={{ animation: 'shake 1s infinite' }}>🧟‍♂️</span>}
-                  </div>
-                ))}
+              <div key={row} className="grid grid-cols-9 gap-2">
+                {Array.from({ length: 9 }).map((_, col) => {
+                  const plantHere = placedPlants.find(p => p.row === row && p.col === col);
+                  const zombiesHere = zombies.filter(z => z.row === row && Math.floor(z.position) === col);
+                  const sunHere = fallingSuns.find(s => s.row === row && s.col === col);
+                  const projectilesHere = projectiles.filter(p => p.row === row && Math.floor(p.position) === col);
+
+                  return (
+                    <div
+                      key={`${row}-${col}`}
+                      className={`aspect-square bg-background/30 rounded-lg border-2 border-border/50 transition-all cursor-pointer flex items-center justify-center text-3xl relative ${
+                        selectedPlant && !plantHere && gameRunning ? 'hover:bg-primary/20 hover:border-primary' : ''
+                      }`}
+                      onClick={() => handleCellClick(row, col)}
+                      style={{
+                        transform: gameRunning ? 'perspective(1000px) rotateX(2deg)' : 'none',
+                      }}
+                    >
+                      {plantHere && (
+                        <div className="relative animate-pulse">
+                          <span className="text-3xl">{plants.find(p => p.id === plantHere.type)?.emoji}</span>
+                          <div className="absolute -bottom-1 left-0 right-0 h-1 bg-border rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-primary transition-all" 
+                              style={{ width: `${(plantHere.hp / (plants.find(p => p.id === plantHere.type)?.hp || 100)) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      
+                      {zombiesHere.map(zombie => (
+                        <div key={zombie.id} className="absolute" style={{ animation: zombie.isEating ? 'shake 0.5s infinite' : 'none' }}>
+                          <span className="text-3xl">{zombieTypes.find(z => z.id === zombie.type)?.emoji}</span>
+                          <div className="absolute -bottom-1 left-0 right-0 h-1 bg-border rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-destructive transition-all" 
+                              style={{ width: `${(zombie.hp / (zombieTypes.find(z => z.id === zombie.type)?.hp || 100)) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+
+                      {sunHere && (
+                        <div 
+                          className="absolute cursor-pointer animate-bounce z-10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSunClick(sunHere.id);
+                          }}
+                        >
+                          <span className="text-4xl">☀️</span>
+                        </div>
+                      )}
+
+                      {projectilesHere.map(proj => (
+                        <div key={proj.id} className="absolute">
+                          <span className="text-xl">🟢</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -154,17 +480,15 @@ export default function Index() {
         <div className="mt-6 grid grid-cols-3 gap-4">
           <Card className="p-4">
             <p className="text-sm text-muted-foreground mb-2">Волна</p>
-            <p className="text-2xl font-bold">3 / 10</p>
+            <p className="text-2xl font-bold">{wave} / 10</p>
           </Card>
           <Card className="p-4">
             <p className="text-sm text-muted-foreground mb-2">Убито зомби</p>
-            <p className="text-2xl font-bold">47</p>
+            <p className="text-2xl font-bold">{zombiesKilled}</p>
           </Card>
           <Card className="p-4">
-            <p className="text-sm text-muted-foreground mb-2">Здоровье</p>
-            <div className="w-full bg-border rounded-full h-3">
-              <div className="bg-primary h-3 rounded-full" style={{ width: '75%' }}></div>
-            </div>
+            <p className="text-sm text-muted-foreground mb-2">Растений</p>
+            <p className="text-2xl font-bold">{placedPlants.length}</p>
           </Card>
         </div>
       </div>
@@ -327,7 +651,7 @@ export default function Index() {
               Цель игры
             </h3>
             <p className="text-muted-foreground leading-relaxed">
-              Защитите свой дом от волн зомби, размещая растения на поле боя. Каждая волна становится сложнее!
+              Защитите свой дом от волн зомби, размещая растения на поле боя. Не дайте зомби дойти до левого края!
             </p>
           </Card>
 
@@ -337,50 +661,26 @@ export default function Index() {
               Солнце
             </h3>
             <p className="text-muted-foreground leading-relaxed mb-4">
-              Солнце нужно для посадки растений. Собирайте падающее солнце или сажайте подсолнухи для генерации.
+              Собирайте падающее солнце кликом! Подсолнухи генерируют +25 солнца каждые 10 секунд.
             </p>
             <div className="flex gap-2">
-              <Badge>Подсолнух: +25 солнца</Badge>
               <Badge>Падающее: +25 солнца</Badge>
+              <Badge>Подсолнух: +25 каждые 10 сек</Badge>
             </div>
           </Card>
 
           <Card className="p-6">
             <h3 className="text-2xl font-bold mb-4 flex items-center">
               <Icon name="Sprout" className="mr-3 text-primary" size={28} />
-              Растения
+              Как играть
             </h3>
-            <div className="space-y-3">
-              {plants.map((plant) => (
-                <div key={plant.id} className="flex items-center gap-4 p-3 bg-background/50 rounded-lg">
-                  <span className="text-3xl">{plant.emoji}</span>
-                  <div className="flex-1">
-                    <p className="font-bold">{plant.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      Стоимость: {plant.cost} ☀️ • Урон: {plant.damage > 0 ? plant.damage : 'Защита'}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <Card className="p-6">
-            <h3 className="text-2xl font-bold mb-4 flex items-center">
-              <Icon name="Skull" className="mr-3 text-secondary" size={28} />
-              Зомби
-            </h3>
-            <div className="space-y-3">
-              {zombies.map((zombie) => (
-                <div key={zombie.id} className="flex items-center gap-4 p-3 bg-background/50 rounded-lg">
-                  <span className="text-3xl">{zombie.emoji}</span>
-                  <div className="flex-1">
-                    <p className="font-bold">{zombie.name}</p>
-                    <p className="text-sm text-muted-foreground">Здоровье: {zombie.hp} HP</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
+              <li>Нажмите "Старт" чтобы начать игру</li>
+              <li>Выберите растение из панели сверху</li>
+              <li>Кликните по клетке поля чтобы посадить</li>
+              <li>Собирайте падающее солнце кликом</li>
+              <li>Защищайтесь от волн зомби!</li>
+            </ol>
           </Card>
 
           <Card className="p-6 border-2 border-primary">
@@ -389,7 +689,7 @@ export default function Index() {
               Мультиплеер
             </h3>
             <p className="text-muted-foreground leading-relaxed">
-              Соревнуйтесь с игроками онлайн! Побеждайте волны зомби быстрее соперников и поднимайтесь в рейтинге.
+              Побеждайте волны зомби и соревнуйтесь с другими игроками в таблице лидеров!
             </p>
           </Card>
         </div>
