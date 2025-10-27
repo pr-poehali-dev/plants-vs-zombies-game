@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar } from '@/components/ui/avatar';
@@ -92,7 +92,7 @@ const allPlants: PlantType[] = [
 
 const zombieTypes: ZombieType[] = [
   { id: 'basic', name: 'Обычный', emoji: '🧟', hp: 100, speed: 0.3 },
-  { id: 'cone', name: 'С конусом', emoji: '🚧', hp: 250, speed: 0.28 },
+  { id: 'cone', name: 'С конусом', emoji: '🧟‍♀️', hp: 250, speed: 0.28 },
   { id: 'bucket', name: 'С ведром', emoji: '🪣', hp: 400, speed: 0.25 },
   { id: 'pole', name: 'С шестом', emoji: '🧟‍♂️', hp: 150, speed: 0.5 },
 ];
@@ -116,7 +116,10 @@ export default function Index() {
   const [gameRunning, setGameRunning] = useState(false);
   const [wave, setWave] = useState(1);
   const [currentLevel, setCurrentLevel] = useState(1);
-  const [maxUnlockedLevel, setMaxUnlockedLevel] = useState(1);
+  const [maxUnlockedLevel, setMaxUnlockedLevel] = useState(() => {
+    const saved = localStorage.getItem('pvz_max_level');
+    return saved ? parseInt(saved) : 1;
+  });
   const [levelCompleted, setLevelCompleted] = useState(false);
   const [zombiesKilled, setZombiesKilled] = useState(0);
   const [gameOver, setGameOver] = useState(false);
@@ -128,7 +131,10 @@ export default function Index() {
   });
   const [username, setUsername] = useState<string | null>(localStorage.getItem('pvz_username'));
   const [draggedPlant, setDraggedPlant] = useState<PlacedPlant | null>(null);
-  const [gameMode, setGameMode] = useState<GameMode>('2d');
+  const [gameMode, setGameMode] = useState<GameMode>(() => {
+    const saved = localStorage.getItem('pvz_game_mode');
+    return (saved === '3d' ? '3d' : '2d') as GameMode;
+  });
   const [gloveCooldown, setGloveCooldown] = useState<number>(0);
   
   const [shopUpgrades, setShopUpgrades] = useState(() => {
@@ -193,7 +199,7 @@ export default function Index() {
     }, 7000);
   }, [gameRunning, gameOver]);
 
-  const getAvailablePlants = useCallback(() => {
+  const availablePlants = useMemo(() => {
     const baseSlots = 2 + currentLevel;
     const totalSlots = shopUpgrades.extraSlot ? baseSlots + 1 : baseSlots;
     return allPlants.slice(0, Math.min(totalSlots, allPlants.length));
@@ -348,6 +354,14 @@ export default function Index() {
     localStorage.setItem('pvz_coins', coins.toString());
   }, [coins]);
 
+  useEffect(() => {
+    localStorage.setItem('pvz_max_level', maxUnlockedLevel.toString());
+  }, [maxUnlockedLevel]);
+
+  useEffect(() => {
+    localStorage.setItem('pvz_game_mode', gameMode);
+  }, [gameMode]);
+
   const handleCellClick = (row: number, col: number) => {
     if (!gameRunning) return;
 
@@ -415,14 +429,17 @@ export default function Index() {
     sounds.sunCollect();
   };
 
-  const buyUpgrade = (upgrade: keyof typeof shopUpgrades, cost: number) => {
+  const buyUpgrade = useCallback((upgrade: keyof typeof shopUpgrades, cost: number) => {
     if (coins >= cost && !shopUpgrades[upgrade]) {
       setCoins(prev => prev - cost);
-      setShopUpgrades(prev => ({ ...prev, [upgrade]: true }));
-      localStorage.setItem('pvz_shop_upgrades', JSON.stringify({ ...shopUpgrades, [upgrade]: true }));
+      setShopUpgrades(prev => {
+        const newUpgrades = { ...prev, [upgrade]: true };
+        localStorage.setItem('pvz_shop_upgrades', JSON.stringify(newUpgrades));
+        return newUpgrades;
+      });
       sounds.plantPlace();
     }
-  };
+  }, [coins, shopUpgrades]);
 
   const startGame = (level?: number) => {
     setGameRunning(true);
@@ -632,7 +649,7 @@ export default function Index() {
         </div>
 
         <div className="grid grid-cols-5 gap-4 mb-6">
-          {getAvailablePlants().map((plant) => {
+          {availablePlants.map((plant) => {
             const cooldown = plantCooldowns.find(c => c.plantId === plant.id);
             const isOnCooldown = cooldown && Date.now() < cooldown.readyAt;
             const cooldownPercent = isOnCooldown ? ((cooldown!.readyAt - Date.now()) / (plant.cooldown || 1)) * 100 : 0;
@@ -668,15 +685,31 @@ export default function Index() {
           currentLevel > 20 
             ? 'bg-gradient-to-b from-purple-950/40 to-blue-950/40' 
             : 'bg-gradient-to-b from-green-900/20 to-green-950/20'
-        }`}>
-          <div className="grid grid-rows-5 gap-2">
-            {Array.from({ length: 5 }).map((_, row) => (
+        }`}
+        style={gameMode === '3d' ? {
+          perspective: '1500px',
+          transformStyle: 'preserve-3d',
+        } : {}}
+        >
+          <div className="grid grid-rows-5 gap-2"
+            style={gameMode === '3d' ? {
+              transform: 'rotateX(10deg)',
+              transformStyle: 'preserve-3d',
+            } : {}}
+          >
+            {Array.from({ length: 5 }).map((_, row) => {
+              const rowPlants = useMemo(() => placedPlants.filter(p => p.row === row), [placedPlants, row]);
+              const rowZombies = useMemo(() => zombies.filter(z => z.row === row), [zombies, row]);
+              const rowSuns = useMemo(() => fallingSuns.filter(s => s.row === row), [fallingSuns, row]);
+              const rowProjectiles = useMemo(() => projectiles.filter(p => p.row === row), [projectiles, row]);
+              
+              return (
               <div key={row} className="grid grid-cols-9 gap-2">
                 {Array.from({ length: 9 }).map((_, col) => {
-                  const plantHere = placedPlants.find(p => p.row === row && p.col === col);
-                  const zombiesHere = zombies.filter(z => z.row === row && Math.floor(z.position) === col);
-                  const sunHere = fallingSuns.find(s => s.row === row && s.col === col);
-                  const projectilesHere = projectiles.filter(p => p.row === row && Math.floor(p.position) === col);
+                  const plantHere = rowPlants.find(p => p.col === col);
+                  const zombiesHere = rowZombies.filter(z => Math.floor(z.position) === col);
+                  const sunHere = rowSuns.find(s => s.col === col);
+                  const projectilesHere = rowProjectiles.filter(p => Math.floor(p.position) === col);
 
                   return (
                     <div
@@ -687,9 +720,10 @@ export default function Index() {
                       onClick={() => handleCellClick(row, col)}
                       style={{
                         transform: gameMode === '3d' 
-                          ? `perspective(1200px) rotateX(${5 + row * 2}deg) rotateY(${col - 4}deg) scale(${1 - row * 0.02})`
+                          ? `translateZ(${-row * 20}px) scale(${1 - row * 0.05})`
                           : 'none',
                         transformStyle: 'preserve-3d',
+                        opacity: gameMode === '3d' ? 1 - row * 0.1 : 1,
                       }}
                     >
                       {plantHere && (
@@ -739,7 +773,8 @@ export default function Index() {
                   );
                 })}
               </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
 
